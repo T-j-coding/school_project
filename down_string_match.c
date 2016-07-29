@@ -130,26 +130,6 @@ int add_key_from_db()
 			//printf("%s\n",azResult[i]);	
                         //add_str(azResult[i]);
                 }
-		
-		add_str("法轮功0s0s");
-		//add_str("2387605198");
-		//add_str("万万没想到");
-		/*add_str("百花ABC");
-		add_str("百花之夜");
-		add_str("人人热点");
-		add_str("从一女牛牛");
-		add_str("北航");
-		add_str("zhongxin");
-		add_str("buaa");
-		//add_str("新鲜事");
-		add_str("迎接舞团小鲜肉");
-		add_str("金鸡百花奖");
-		add_str("百花奖");
-		add_str("中国电影");
-		add_str("范冰冰");
-		add_str("tfboy");
-		add_str("找大学同学");*/
-		
         }
         return 1;
 }
