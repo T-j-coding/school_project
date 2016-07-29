@@ -1,0 +1,241 @@
+#include "loop.h"
+
+sqlite3 *db = NULL;
+int init_sqlite()
+{
+    char* dbpath="shutter2.db";
+    char *zErrMsg = 0;
+    int rc;
+    //open the database file.If the file is not exist,it will create a file.
+    rc = sqlite3_open(dbpath, &db);
+    if( rc )
+    {
+        fprintf(stderr, "Can't open database: %s\n", sqlite3_errmsg(db));
+        sqlite3_close(db);
+        return 0;
+    }
+    return 1;
+}
+
+void process_data_head(struct data_head * dh)
+{
+//printf("process data head ,state:%d\n",dh->a_tcp->gk_state);
+    /*--Description--
+    	get mutex lock, then get all data_segment (up) in data_head,
+    	split out every http request,
+    	and send it to process_http()
+    */
+    //printf(" |---Node---test| ");
+/*--step 1, get mutex lock--*/
+    if(pthread_mutex_trylock(&(dh->tcp_stream_lock_up))==0)
+    {
+	if(NULL == dh->temp_up)
+	{
+	    dh->temp_up = dh->first_up;
+	}
+        if(NULL == dh->a_tcp||dh->a_tcp->gk_state==GK_STATE_BLOCK)
+	{//has no tcp stream , or blocked already
+	    pthread_mutex_unlock(&(dh->tcp_stream_lock_up));
+	    return;
+	}
+	if(dh->temp_up == dh->last_up)// && dh->offset_up == dh->last_up->len)
+	{//do not have new data
+	    pthread_mutex_unlock(&(dh->tcp_stream_lock_up));
+	    return;	
+	}
+	
+        char * buffer;
+        uint32_t buffer_length;
+        int request_number = 0;
+        uint32_t offset_temp = dh->offset_up;// temp offset, for putting ptr to offset
+        //uint32_t offset_new = 0; //data processed this round
+        uint32_t this_length = 0;
+	int illegalcount = 0;
+        struct data_segment * ds = NULL;
+        //struct data_segment * start = NULL;
+        //pthread_mutex_lock(&(dh->tcp_stream_lock_up));
+//printf("step 2\n");
+/*--step 2, find the data_segment that "offset" points to--*/
+/*        ds = dh->first_up;
+        while(ds != dh->last_up->next) //find the segment contains offset
+        {
+            if(ds->len > offset_temp) //offset is in this data_segment
+            {
+                break;
+            }
+            else // havn't reach segment
+            {
+                offset_temp = offset_temp - ds->len;
+            }
+            ds = ds->next;
+        }
+        /store this segment to "start" ,and offset in this segment to "offset_temp"
+        start = ds;
+*/
+//overwite step2:  ...seems not neccssary
+	//ds = dh->first_up;
+	//start = dh->temp_up;
+	
+/*--step 3, calculate length from offset to end--*/
+//overwrite        this_length = ds->len - offset_temp;
+//overwrite	this_length = dh->temp_up->len - dh->offset_up;
+	this_length = 0;
+        ds = dh->first_up->next;
+        while(ds != dh->last_up->next)
+        {
+            this_length += ds->len;
+            ds = ds->next;
+        }
+        //printf("\ndata length:%d\n",this_length);
+
+/*--step 4, get all data from offset to end--*/
+        buffer = (char*)malloc( (1+this_length)*sizeof(char));
+	bzero(buffer,(1+this_length)*sizeof(char));
+        //*(buffer+buffer_length)='\0';
+        buffer_length = this_length;
+
+        //this_length = dh->temp_up->len - dh->offset_up;
+        //memcpy(buffer, dh->temp_up->data+dh->offset_up, this_length);
+        ds = dh->temp_up->next;
+        while(ds != dh->last_up->next)
+        {
+            memcpy(buffer + strlen(buffer), ds->data, ds->len); //erroryangbr
+            //this_length += ds->len;
+            ds = ds->next;
+        }
+        //printf("buffer:%s\n",buffer);
+/*--step 5, get all request head pointer offset into an array--*/
+        request_number = get_request_number(buffer);
+        int request[request_number];
+        get_request_offset(buffer,request);
+        //printf("request number:%d\n",request_number);
+/*--step 6, put every request into processhttp(char*,int)--*/
+
+        int i=0;
+        //check every requests except the last one.
+	for(; i<request_number-1 ; i++)
+	{
+	    if( processhttp(buffer+request[i],request[i+1]-request[i]) )
+	    {
+		int ra = kw_match(c_info.comment);
+		int rt = trie_chk_rule(c_info.user_id, c_info.s_id, c_info.p_type, c_info.r_id);
+		if(ra+rt)
+		{
+		    printf("find illegal!\n");
+		    dh->a_tcp->gk_state = GK_STATE_BLOCK;
+		    struct loginfo log;
+		    initlog(&log, dh->a_tcp);
+		    log_addsocialinfo(&log, &c_info);
+		    if(ra)
+		    {
+			char* kw[ra];
+			int z;
+			for(z=0; z<ra; z++)
+			{
+			    kw[z] = (char*)malloc(256*sizeof(char));
+			    bzero(kw[z],256*sizeof(char));
+			}
+			get_keywords(c_info.comment,kw);
+			log_addkeywords(&log, kw, ra);	
+		    }
+		    sendlog(&log);
+		    dh->temp_up = dh->last_up;
+		    goto end;
+		}
+	    }
+	    else
+	    {
+		//printf("processhttp return false\n");
+	    }
+	}
+	//check the last request. because we have to identify whether it is complete
+        if(processhttp(buffer+request[request_number-1],buffer_length-request[request_number-1]))
+	{
+	    int ra = kw_match(c_info.comment);
+	    int rt = trie_chk_rule(c_info.user_id, c_info.s_id, c_info.p_type, c_info.r_id);
+	    if(ra+rt)
+	    {
+		printf("find illegal!\n");
+		dh->a_tcp->gk_state = GK_STATE_BLOCK;
+		struct loginfo log;
+		initlog(&log, dh->a_tcp);
+		log_addsocialinfo(&log, &c_info);
+		if(ra)
+		{
+		    char* kw[ra];
+		    int z;
+		    for(z=0; z<ra; z++)
+		    {
+			kw[z] = (char*)malloc(256*sizeof(char));
+			bzero(kw[z],256*sizeof(char));
+		    }
+		    get_keywords(c_info.comment,kw);
+		    log_addkeywords(&log, kw, ra);
+		}
+		sendlog(&log);
+	    } 
+	    dh->temp_up = dh->last_up;
+	}
+	else
+	{
+	    //dh->offset_up += request[request_number-1];
+	    uint32_t plen = request[request_number-1];
+	    //plen -= dh->temp_up->len - dh->offset_up;
+	    ds = dh->temp_up->next;
+	    while(ds != dh->last_up->next)
+	    {
+		if(plen > ds->len)
+		{
+		    plen -= ds->len;
+		}
+		else
+		{
+		    dh->temp_up = ds;
+		    dh->offset_up = plen;
+		    break;
+		}
+	    }
+	}
+
+/*--step 7, release mutex lock--*/
+	end:
+	free(buffer);
+	pthread_mutex_unlock(&(dh->tcp_stream_lock_up));
+    }
+    //printf("Done\n");
+    return;
+}
+
+void* loop(void *arg)
+{
+printf("start loop up\n");
+    int loopcount = 0;
+    for(; loopcount<DATA_CACHE_TABLE_SIZE;)
+    {
+        //printf("%d--->",loopcount);
+        //poll the linked-list in one data_cache_table, send each data_head to process_data_head()
+        struct data_head * dh_pos = &data_cache_table[loopcount];
+        while(dh_pos!=NULL)
+        {
+//			if(dh_pos->a_tcp->gk_state == GK_STATE_UNCHECKED)
+            process_data_head(dh_pos);
+            dh_pos = dh_pos->next;
+        }
+        //printf("\n");
+
+        //following lines for endless loop
+        if ( loopcount == DATA_CACHE_TABLE_SIZE-1 )
+        {
+            loopcount = 0;
+            continue;
+        }
+        loopcount++;
+    }
+}
+
+void init_loop()
+{
+    init_sqlite();
+    init_ac();
+    init_trie_tree();
+}

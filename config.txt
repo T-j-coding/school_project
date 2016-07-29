@@ -1,0 +1,4 @@
+up_router_mac 00:00:00:00:00:b0
+down_router_mac 00:00:00:00:00:b1
+my_mac 00:e0:ed:19:46:e9
+gk_method 4

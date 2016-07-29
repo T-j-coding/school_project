@@ -1,0 +1,1 @@
+gcc -w -g -fno-strict-aliasing -O2 -o shutter-gk query_table.c get_data.c packet_send.c hash.c util.c loop-1831-wxy.c acsmx.c string_matcher.c sqlite.c http_parse.c http.c urlparser.c qs_parse.c Arena.c MemoryManager.c trie.c log-wxy.c rule_accepter.c shutter.c -lpcap -lnet -lnids -lpthread -lgthread-2.0 -lsqlite3
